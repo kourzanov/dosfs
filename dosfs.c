@@ -160,6 +160,8 @@ const char *fn = 0;
 const char *sfn = 0;
 int fd = -1;
 int wp = 0;
+int offset = 0;
+size_t length = 0;
 
 DSTATUS disk_status (BYTE pdrv)
 {
@@ -191,7 +193,7 @@ DRESULT disk_read (BYTE pdrv, BYTE *buff, LBA_t sector,	UINT count)
 
   if (! fd)
     return RES_NOTRDY;
-  if (lseek(fd, (off_t)(sector * 512), SEEK_SET)  == (off_t)(-1))
+  if (lseek(fd, (off_t)(sector * 512) + offset, SEEK_SET)  == (off_t)(-1))
     return RES_PARERR;
   while (sz > 0) {
     rsz = read(fd, buff, sz);
@@ -215,7 +217,7 @@ DRESULT disk_write (BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
     return RES_NOTRDY;
   if (wp)
     return RES_WRPRT;
-  if (lseek(fd, (off_t)(sector * 512), SEEK_SET) == (off_t)(-1))
+  if (lseek(fd, (off_t)(sector * 512)+offset, SEEK_SET) == (off_t)(-1))
     return RES_PARERR;
   while (sz > 0) {
     rsz = write(fd, buff, sz);
@@ -249,7 +251,7 @@ DRESULT disk_ioctl (BYTE pdrv, BYTE cmd, void *buff)
         off_t sz;
         if (fd < 0)
           return RES_NOTRDY;
-        sz = lseek(fd, 0, SEEK_END);
+        sz = (length ? length : lseek(fd, 0, SEEK_END));
         if (sz == (off_t)-1)
           return RES_ERROR;
         *(LBA_t*)buff = (LBA_t)sz / 512;
@@ -442,7 +444,7 @@ FRESULT rdir(char *path, char *pattern, int sflag, int bflag, int xflag,
   while (path[0] == '/')
     path += 1;
   if (! bflag)
-    printf("\n Directory of [%s]:/%s\n\n", sfn, path);
+    printf("\n Directory of [%s@%ld]:/%s\n\n", sfn, offset, path);
   res = f_findfirst(&dir, &info, path, pattern);
   if (res != FR_OK && res != FR_NO_FILE)
     return res;
@@ -805,12 +807,12 @@ FRESULT rdelone(char *path, int verbose)
 {
   if (dir_p(path)) {
     char *npath;
-    if (verbose >= 0 && !prompt("[%s]:%s, Delete entire subtree", sfn, path))
+    if (verbose >= 0 && !prompt("[%s@%ld]:%s, Delete entire subtree", sfn, offset, path))
       return FR_OK;
     npath = strconcat(path, "/", "*", 0);
     rdelmany(npath, -1);
     free(npath);
-  } else if (verbose > 0 && ! prompt("[%s]:%s, Delete", sfn, path))
+  } else if (verbose > 0 && ! prompt("[%s@%ld]:%s, Delete", sfn, offset, path))
     return FR_OK;
   return f_unlink(path);
 }
@@ -908,7 +910,7 @@ FRESULT dosmove(int argc, const char **argv)
         while (to[0] == '/')
           to += 1;
         if (file_p(to))
-          if (qflag || prompt("[%s]:/%s, Replace", sfn, to))
+          if (qflag || prompt("[%s@%ld]:/%s, Replace", sfn, offset, to))
             f_unlink(to);
         res = f_rename(from, to);
         free(from);
@@ -1139,10 +1141,10 @@ FRESULT dosformat(int argc, const char **argv)
     parm.fmt |= FM_SFD;
 
   if (VolToPart[0].pt) {
-    if (! prompt("Erase partition %d in [%s]", VolToPart[0].pt, sfn))
+    if (! prompt("Erase partition %d in [%s@%ld]", VolToPart[0].pt, sfn, offset))
       return FR_OK;
   } else {
-    if (! prompt("Erase everything in [%s]", sfn))
+    if (! prompt("Erase everything in [%s@%ld]", sfn, offset))
       return FR_OK;
   }
   res = f_mkfs("", &parm, buffer, sizeof(buffer));
@@ -1243,6 +1245,20 @@ int main(int argc, const char **argv)
                     argv[i], commands[cmdno].cmd);
           if ((cmdno = search_cmd(argv[i]+2)) < 0)
             fatal("Unrecognized subcommand : %s\n", argv[i]);
+          continue;
+        }
+      if (!strcmp(argv[i], "-j") && i + 1 < argc)
+        {
+          char *off = argv[i + 1];
+          offset = atoi(off);
+          i += 1;
+          continue;
+        }
+      if (!strcmp(argv[i], "-n") && i + 1 < argc)
+        {
+          char *len = argv[i + 1];
+          length = atoi(len);
+          i += 1;
           continue;
         }
       if (!strcmp(argv[i], "-f") && i + 1 < argc)
